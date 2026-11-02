@@ -208,9 +208,9 @@ src/
   - `zigbee_802154()`: 12% loss rate, 25ms latency, 10ms jitter (modeling 2.4 GHz ISM interference).
   - `lora_fading()`: 25% loss rate, 150ms latency, 50ms jitter (modeling deep Rayleigh fading).
 - **Block 3: `transmit(&self, packet: &[u8]) -> Option<Vec<u8>>`**
-  - **Fading/Drop Step:** Evaluates Bernoulli trial with probability $P_{\text{loss}}$; drops packet if true.
-  - **Delay Step:** Computes latency $T = \text{base\_latency} \pm \text{jitter}$ and delays thread.
-  - **Bit Corruption Step:** Inverts random bits with probability $P_{\text{BER}}$ to verify receiver checksum rejection.
+  - **Fading/Drop Step:** Evaluates a Bernoulli trial with packet drop probability $P_{\text{loss}}$; drops the frame if true (simulating multipath nulls).
+  - **Delay Step:** Computes transmission delay $T = \text{base\_latency} \pm \text{jitter}$ and simulates propagation and MAC contention delay.
+  - **Bit Corruption Step:** Inverts random bits with bit error probability $P_{\text{BER}}$ to test receiver-side checksum verification and frame discard.
 
 ---
 
