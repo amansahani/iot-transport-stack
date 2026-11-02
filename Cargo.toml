@@ -1,0 +1,14 @@
+[package]
+name = "iot-transport-stack"
+version = "0.1.0"
+edition = "2021"
+authors = ["IIIT Sri City - M.Tech IoT"]
+description = "RFC-Compliant TCP/UDP Transport Layer Implementation with Wireless Channel Fading Simulation"
+
+[dependencies]
+byteorder = "1.5"
+colored = "2.1"
+rand = "0.8"
+thiserror = "1.0"
+log = "0.4"
+env_logger = "0.11"
