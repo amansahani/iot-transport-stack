@@ -2,8 +2,6 @@
 
 A modular, RFC-compliant TCP and UDP transport layer implementation written in Rust with wireless channel fading simulation and application-layer bindings (HTTP/1.1 and CoAP).
 
-Developed as part of the Wireless Communication coursework for the M.Tech in IoT program at IIIT Sri City.
-
 ## Overview
 
 Traditional transport protocols make assumptions based on wired network behavior. Specifically, standard TCP assumes that packet loss indicates network buffer congestion. In wireless IoT environments (e.g., IEEE 802.15.4, LoRa, cellular IoT), packet loss is predominantly caused by multipath fading, shadow fading, and interference.
