@@ -1,18 +1,22 @@
 pub mod proto;
 pub mod tcp;
 pub mod wireless;
+pub mod server;
+pub mod client;
 
 use colored::*;
 use proto::*;
 use tcp::*;
 use wireless::WirelessChannel;
-use std::time::Instant;
+use server::TransportServer;
+use client::TransportClient;
+use std::time::{Instant, Duration};
 
 fn print_banner() {
     println!("{}", "================================================================================".cyan());
     println!("{}", "   IIIT SRI CITY - M.TECH IoT WIRELESS COMMUNICATION COURSE PRESENTATION".bold().yellow());
     println!("{}", "   RFC-Compliant TCP/UDP Transport Layer Architecture in Rust".bold().green());
-    println!("{}", "   RFC 768 (UDP) | RFC 9293 (TCP FSM) | RFC 9112 (HTTP/1.1) | RFC 7252 (CoAP)".italic().white());
+    println!("{}", "   RFC 768 (UDP) | RFC 9293 (TCP FSM) | RFC 9112 (HTTP) | Multi-Protocol Socket API".italic().white());
     println!("{}", "================================================================================\n".cyan());
 }
 
@@ -79,64 +83,67 @@ fn demo_three_way_handshake() {
     println!("  {}\n", "-> TCP Handshake Successfully Established!".bold().bright_green());
 }
 
-fn demo_http_over_tcp() {
-    println!("{}", ">>> [DEMO 3]: Full Layer 7 HTTP/1.1 REST Transmission over Custom TCP Stack".bold().magenta());
-    let client_ip = [192, 168, 1, 50];
-    let server_ip = [192, 168, 1, 1];
-    let client_port = 52341;
-    let server_port = 80;
+fn demo_socket_api_multi_protocol() {
+    println!("{}", ">>> [DEMO 3]: Multi-Protocol Support via std::net::{TcpListener, TcpStream}".bold().magenta());
+    println!("  Demonstrating how diverse L7 application protocols plug into our custom TCP transport layer.\n");
 
-    // 1. Establish TCP Connection
-    let mut client = TcpConnection::new(client_ip, client_port, server_ip, server_port, 100);
-    let mut server = TcpConnection::new(server_ip, server_port, client_ip, client_port, 900);
-    server.state = TcpState::Listen;
+    let bind_addr = "127.0.0.1:28888";
+    let server = TransportServer::bind(bind_addr).expect("Server binds to local port");
 
-    let syn = client.build_syn();
-    let syn_ack = server.handle_incoming(&syn).unwrap();
-    let ack = client.handle_incoming(&syn_ack).unwrap();
-    server.handle_incoming(&ack);
+    // Protocol 1: HTTP/1.1 REST Telemetry (RFC 9112)
+    println!("  --- [Protocol A]: HTTP/1.1 REST Service over Custom TCP ---");
+    let server_thread = std::thread::spawn(move || {
+        let _ = server.accept_one(Duration::from_secs(2), |app_bytes| {
+            if let Ok(req) = HttpRequest::parse(app_bytes) {
+                println!("    [Server RX: HTTP {}] Path: {} | Host: {}", req.method.green(), req.path, req.host);
+                let resp = HttpResponse::new_200_json(r#"{"status":"ACCEPTED","processed_time_ms":8}"#);
+                return Some(resp.serialize());
+            } else if let Ok(s) = std::str::from_utf8(app_bytes) {
+                println!("    [Server RX: Text Frame] {}", s);
+            }
+            None
+        });
+    });
 
-    println!("  [Layer 4 Status] TCP Stream Established between Node {}:{} and Gateway {}:{}", 
-        "192.168.1.50", client_port, "192.168.1.1", server_port);
+    std::thread::sleep(Duration::from_millis(50));
 
-    // 2. Client sends HTTP POST with JSON IoT Telemetry (RFC 9112)
-    let json_body = r#"{"node_id":"iiits-sensor-09","temp_c":27.8,"humidity":58,"battery_mv":3290}"#;
-    let http_req = HttpRequest::new_post_json("/api/v1/telemetry", "iot-gateway.iiits.ac.in", json_body);
-    let http_req_bytes = http_req.serialize();
+    // Client connects using TransportClient (TcpStream + RFC TCB)
+    let mut client = TransportClient::connect(bind_addr, 54321, 28888).expect("Client connects");
+    let req = HttpRequest::new_post_json("/api/v1/telemetry", "iot.iiits.ac.in", r#"{"temp":24.5,"batt":98}"#);
+    client.send_app_data(&req.serialize()).expect("Client sends HTTP request");
 
-    println!("  [Layer 7 TX: Client -> Gateway HTTP POST Request]");
-    println!("    Method: POST {} HTTP/1.1 | Host: {}", http_req.path, http_req.host);
-    println!("    Payload: {}", http_req.body.green());
+    let resp_bytes = client.read_app_data().expect("Client reads HTTP response");
+    if let Ok(resp) = HttpResponse::parse(&resp_bytes) {
+        println!("    [Client RX: HTTP Response] Status: {} | Body: {}", resp.status_code.to_string().bold().green(), resp.body.cyan());
+    }
+    client.close().expect("Client closes TCP");
+    server_thread.join().unwrap();
 
-    // 3. Encapsulate into TCP Segment
-    let client_data_seg = client.build_data_segment(http_req_bytes);
-    println!("  [Layer 4 Encapsulation] TCP Data Segment Seq={}, Len={} bytes", client_data_seg.seq_num, client_data_seg.payload.len());
+    // Protocol 2: MQTT-style Lightweight Binary IoT Command Stream
+    println!("\n  --- [Protocol B]: Binary IoT Command Stream over Custom TCP ---");
+    let bind_addr_bin = "127.0.0.1:28889";
+    let server_bin = TransportServer::bind(bind_addr_bin).expect("Binary server binds");
 
-    // 4. Server receives, decapsulates and processes HTTP Request
-    let server_ack = server.handle_incoming(&client_data_seg).unwrap();
-    client.handle_incoming(&server_ack);
+    let server_thread_bin = std::thread::spawn(move || {
+        let _ = server_bin.accept_one(Duration::from_secs(2), |app_bytes| {
+            println!("    [Server RX: Binary IoT Frame] Length: {} bytes, Raw: {:02X?}", app_bytes.len(), &app_bytes[..app_bytes.len().min(8)]);
+            // Return binary ACK packet: [0x80 (CMD_ACK), 0x01 (STATUS_OK)]
+            Some(vec![0x80, 0x01, 0x00, 0x00])
+        });
+    });
 
-    let parsed_req = HttpRequest::parse(&client_data_seg.payload).unwrap();
-    assert_eq!(parsed_req.method, "POST");
+    std::thread::sleep(Duration::from_millis(50));
 
-    // 5. Server responds with HTTP 200 OK + JSON Acknowledgement
-    let http_resp = HttpResponse::new_200_json(r#"{"status":"ACCEPTED","processed_time_ms":12}"#);
-    let http_resp_bytes = http_resp.serialize();
-    let server_data_seg = server.build_data_segment(http_resp_bytes);
+    let mut client_bin = TransportClient::connect(bind_addr_bin, 54322, 28889).expect("Binary client connects");
+    let binary_iot_payload = vec![0x10, 0x04, 0xAA, 0xBB, 0xCC, 0xDD]; // Simulated Sensor Config Command
+    client_bin.send_app_data(&binary_iot_payload).expect("Send binary payload");
 
-    let client_ack = client.handle_incoming(&server_data_seg).unwrap();
-    server.handle_incoming(&client_ack);
+    let ack_bytes = client_bin.read_app_data().expect("Read binary ack");
+    println!("    [Client RX: Binary IoT Response] Bytes: {:02X?} (Command Acknowledged)", ack_bytes);
 
-    let parsed_resp = HttpResponse::parse(&server_data_seg.payload).unwrap();
-    println!("  [Layer 7 RX: Gateway -> Client HTTP Response]");
-    println!("    Status: {} {}", parsed_resp.status_code, parsed_resp.reason_phrase.bold().green());
-    println!("    Response Body: {}", parsed_resp.body.cyan());
-
-    // 6. Graceful TCP Teardown
-    let fin = client.build_fin();
-    let fin_ack = server.handle_incoming(&fin).unwrap();
-    client.handle_incoming(&fin_ack);
-    println!("  [Layer 4 Teardown] Connection Gracefully Closed with FIN/ACK. State: [{}]\n", client.state.to_string().yellow());
+    client_bin.close().expect("Binary client closes");
+    server_thread_bin.join().unwrap();
+    println!("  {}\n", "-> Multi-protocol application layer successfully demonstrated over standard socket abstractions!".bright_green());
 }
 
 fn demo_wireless_comparison() {
@@ -233,6 +240,6 @@ fn main() {
     print_banner();
     demo_rfc_compliance();
     demo_three_way_handshake();
-    demo_http_over_tcp();
+    demo_socket_api_multi_protocol();
     demo_wireless_comparison();
 }

@@ -1,5 +1,3 @@
-use std::fmt;
-
 /// RFC 9112 HTTP/1.1 Request and Response Abstractions
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpRequest {
